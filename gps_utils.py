@@ -142,3 +142,85 @@ def write_rtcm(data: bytes):
         gps_uart.write(data)
     except Exception as e:
         print("UART write exception:", e)
+
+def _nmea_checksum(s: str) -> str:
+    cs = 0
+    for ch in s:
+        cs ^= ord(ch)
+    return f"*{cs:02X}\r\n"
+
+def _send_pair(payload: str, wait_ms=600) -> str:
+    """
+    Send a $PAIR... command and return any short ASCII response.
+    Example payload: "PAIR752,2,100"
+    """
+    cmd = f"${payload}{_nmea_checksum(payload)}"
+    try:
+        gps_uart.write(cmd)
+    except Exception as e:
+        print("GPS write failed:", e)
+        return ""
+
+    t0 = time.ticks_ms()
+    resp = b""
+    while time.ticks_diff(time.ticks_ms(), t0) < wait_ms:
+        try:
+            if gps_uart.any():
+                resp += gps_uart.read(gps_uart.any() or 1)
+            time.sleep_ms(10)
+        except Exception:
+            break
+
+    text = ""
+    try:
+        text = resp.decode("ascii", "ignore")
+    except Exception:
+        pass
+    if text:
+        print("PAIR resp:", text)
+    return text
+
+def _send_pqtm(body: str, wait_ms=600) -> str:
+    # (kept in case your firmware supports PQTM)
+    cmd = f"${body}{_nmea_checksum(body)}"
+    try:
+        gps_uart.write(cmd)
+    except Exception as e:
+        print("GPS write failed:", e)
+        return ""
+    t0 = time.ticks_ms()
+    resp = b""
+    while time.ticks_diff(time.ticks_ms(), t0) < wait_ms:
+        try:
+            if gps_uart.any():
+                resp += gps_uart.read(gps_uart.any() or 1)
+            time.sleep_ms(10)
+        except Exception:
+            break
+    try:
+        text = resp.decode("ascii", "ignore")
+        if text:
+            print("PQTM resp:", text)
+        return text
+    except Exception:
+        return ""
+
+def disable_pps():
+    """
+    LC29H PAIR command to configure PPS.
+    Per your doc: $PAIR752,<PPSType>,<PPSPulseWidth>*CS
+    We'll try to DISABLE PPS with PPSType=0 (common 'off' selector) and width=0.
+    Success is acknowledged by: $PAIR001,752,0*CS
+    """
+    txt = _send_pair("PAIR752,0,0", wait_ms=800)
+    ok = "$PAIR001,752,0" in txt
+    if ok:
+        print("PAIR752: PPS disabled (ack okay).")
+        return True
+
+    print("PAIR752 disable not acknowledged; trying PQTM fallback...")
+    # Fallback for firmwares that use PQTM (if supported on your unit)
+    txt2 = _send_pqtm("PQTMCFGPPS,W,1,0,100,1,1,0", wait_ms=800)
+    if "$PQTMCFGPPS" in txt2 or "OK" in txt2:
+        print("PQTM fallback sent.")
+    return ok

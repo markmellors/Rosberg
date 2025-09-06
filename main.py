@@ -9,6 +9,8 @@ import system_state
 import _thread
 import rover_control
 import waypoint_utils
+from machine import Pin
+import pin_defs
 
 system_state.display_lines[0] = "Starting..."
 
@@ -30,6 +32,23 @@ ntrip_socket = network_utils.connect_ntrip()
 _thread.start_new_thread(web_server.start_file_server, (ip, 80))
 
 last_display = time.ticks_ms()
+
+pps_pin = Pin(pin_defs.GPS_PPS, Pin.IN)
+
+def test_pps():
+    print("Monitoring PPS pin...")
+    for i in range(100):
+        print("PPS value:", pps_pin.value())
+        time.sleep(0.1)
+
+        
+print("with pps test")
+test_pps()
+
+gps_utils.disable_pps()
+print("without pps test")
+test_pps()
+
 # Main loop
 while True:	
     gps_data = gps_utils.read_and_parse(system_state.gps_data)
