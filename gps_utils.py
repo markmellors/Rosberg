@@ -3,6 +3,9 @@ import sys
 import time
 import math
 
+
+MAX_POINTS = 60 
+_track = []                
 DEGREE_SYMBOL = chr(248)
 
 gps_uart = UART(1, baudrate=115200)
@@ -55,7 +58,7 @@ def parse_fix_quality(nmea):
 def parse_heading(nmea):
     try:
         heading = float(nmea.split(',')[1])
-        return f"Head: {heading:.2f}{DEGREE_SYMBOL}"
+        return f"Head: {heading:.2f}°"   # use a proper Unicode degree
     except:
         return None
 
@@ -80,6 +83,9 @@ def process_buffer(buffer, latest):
                 if lat_str and lon_str:
                     latest['lat'] = lat_str
                     latest['lon'] = lon_str
+                    lat_f, lon_f = parse_lat_lon(nmea)
+                    if lat_f is not None and lon_f is not None:
+                        add_fix(lat_f, lon_f)  # ts auto-filled
                 latest['time'] = parse_time(nmea)
                 latest['fix'] = parse_fix_quality(nmea)
                 latest['last_update_ticks'] = time.ticks_ms()
@@ -224,3 +230,33 @@ def disable_pps():
     if "$PQTMCFGPPS" in txt2 or "OK" in txt2:
         print("PQTM fallback sent.")
     return ok
+
+
+def add_fix(lat, lon, ts=None):
+    global _track
+    _track.append({"lat": lat, "lon": lon, "t": ts or int(time.time())})  # <-- time.time()
+    if len(_track) > MAX_POINTS:
+        _track = _track[-MAX_POINTS:]
+
+def current_fix():
+    """Return the latest fix or None."""
+    return _track[-1] if _track else None
+
+def as_geojson():
+    """Return a tiny GeoJSON payload: points + line."""
+    coords = [[p["lon"], p["lat"]] for p in _track]  # GeoJSON is [lon,lat]
+    features = []
+    if _track:
+        # breadcrumb points (sparse to reduce payload if needed)
+        features.append({
+            "type": "Feature",
+            "properties": {"kind": "points"},
+            "geometry": {"type": "MultiPoint", "coordinates": coords}
+        })
+        # connecting line
+        features.append({
+            "type": "Feature",
+            "properties": {"kind": "track"},
+            "geometry": {"type": "LineString", "coordinates": coords}
+        })
+    return {"type": "FeatureCollection", "features": features}

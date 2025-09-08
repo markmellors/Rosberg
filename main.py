@@ -25,29 +25,15 @@ display_utils.update_display()
 ip = network_utils.connect_wifi()
 system_state.display_lines[6] = "IP: " + str(ip)
 
-# Connect to NTRIP caster
-ntrip_socket = network_utils.connect_ntrip()
-
 # Start web server thread
 _thread.start_new_thread(web_server.start_file_server, (ip, 80))
 
+# Connect to NTRIP caster
+ntrip_socket = network_utils.connect_ntrip()
+
 last_display = time.ticks_ms()
 
-pps_pin = Pin(pin_defs.GPS_PPS, Pin.IN)
-
-def test_pps():
-    print("Monitoring PPS pin...")
-    for i in range(100):
-        print("PPS value:", pps_pin.value())
-        time.sleep(0.1)
-
-        
-print("with pps test")
-test_pps()
-
 gps_utils.disable_pps()
-print("without pps test")
-test_pps()
 
 # Main loop
 while True:	
