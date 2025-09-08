@@ -25,6 +25,8 @@ HTML_INDEX = """<!doctype html>
     code { background:#f5f5f5; padding:2px 6px; border-radius:6px; }
     #logs { padding: var(--pad); border-top:1px solid #eee; }
     button { margin-right: 8px; }
+    select { padding: 2px 4px; }
+    label.box { cursor: default; }
   </style>
 </head>
 <body>
@@ -40,7 +42,17 @@ HTML_INDEX = """<!doctype html>
     <div class="box">Steering PWM: <code id="steer">–</code></div>
     <div class="box">Current WP: <code id="wp">–</code></div>
     <div class="box">Heading Error: <code id="herr">–</code></div>
-    <form action="/steering" method="get" style="margin-left:auto">
+
+    <!-- NEW: Compare log picker -->
+    <label class="box" style="display:flex;gap:6px;align-items:center;margin-left:auto">
+      <span>Compare log:</span>
+      <select id="logSelect">
+        <option value="">(choose)</option>
+      </select>
+      <button id="clearLog" type="button">Clear</button>
+    </label>
+
+    <form action="/steering" method="get">
       <button name="state" value="on">Enable Steering</button>
       <button name="state" value="off">Disable Steering</button>
     </form>
@@ -73,22 +85,99 @@ HTML_INDEX = """<!doctype html>
   const crumbLayer = L.layerGroup().addTo(map);
   const posMarker = L.circleMarker([0, 0], { radius: 6 }).addTo(map);
 
-  L.control.layers({ "Aerial (Esri)": esri, "Streets (OSM)": osm },
-                   { "Track": trackLine, "Breadcrumbs": crumbLayer },
-                   { collapsed: true }).addTo(map);
+  // NEW: Log overlay layers (CSV playback)
+  const logLine = L.polyline([], { weight: 3, opacity: 0.85, color: "yellow" }).addTo(map);
+  const logCrumbs = L.layerGroup().addTo(map);
+
+  const baseLayers = { "Aerial (Esri)": esri, "Streets (OSM)": osm };
+  const overlays   = {
+    "Track": trackLine, "Breadcrumbs": crumbLayer,
+    "Log Track": logLine, "Log Points": logCrumbs
+  };
+  L.control.layers(baseLayers, overlays, { collapsed: true }).addTo(map);
 
   let initialized = false;
 
+  function downsampleLatLngs(latlngs, maxLen=2000) {
+    const n = latlngs.length;
+    if (n <= maxLen) return latlngs;
+    const step = Math.max(1, Math.floor(n / maxLen));
+    const out = [];
+    for (let i = 0; i < n; i += step) out.push(latlngs[i]);
+    return out;
+  }
+
+  async function loadCsvTrack(url) {
+    try {
+      const txt = await fetch(url, { cache: "no-store" }).then(r => r.text());
+      const lines = txt.trim().split(/\\r?\\n/);
+
+      // Expect header: time,latitude,longitude,heading
+      let start = 0;
+      if (/^\\s*time\\s*,\\s*latitude\\s*,\\s*longitude/i.test(lines[0])) start = 1;
+
+      const pts = [];
+      for (let i = start; i < lines.length; i++) {
+        const row = lines[i].trim();
+        if (!row) continue;
+        const parts = row.split(",");
+        if (parts.length < 3) continue;
+        const lat = parseFloat(parts[1]);
+        const lon = parseFloat(parts[2]);
+        if (Number.isFinite(lat) && Number.isFinite(lon)) pts.push([lat, lon]);
+      }
+
+      const ds = downsampleLatLngs(pts, 2000);
+
+      logCrumbs.clearLayers();
+      logLine.setLatLngs(ds);
+      const crumbStep = Math.max(1, Math.floor(ds.length / 200));
+      for (let i = 0; i < ds.length; i += crumbStep) {
+        L.circleMarker(ds[i], { radius: 3 }).addTo(logCrumbs);
+      }
+
+      if (ds.length) {
+        map.fitBounds(L.latLngBounds(ds));
+      }
+    } catch (e) {
+      console.warn("Failed to load CSV track:", e);
+      alert("Could not load that log file.");
+    }
+  }
+
+  function clearCsvTrack() {
+    logLine.setLatLngs([]);
+    logCrumbs.clearLayers();
+  }
+
+  function populateLogListFromStatus(extra) {
+    try {
+      const files = (extra && extra.files) || [];
+      const select = document.getElementById("logSelect");
+      const logs = files.filter(f => /^log_.*\\.csv$/i.test(f));
+      const existing = new Set(Array.from(select.options).map(o => o.value));
+      for (const f of logs) {
+        if (!existing.has(f)) {
+          const opt = document.createElement("option");
+          opt.value = f; opt.textContent = f;
+          select.appendChild(opt);
+        }
+      }
+    } catch {}
+  }
+
+  document.getElementById("logSelect").addEventListener("change", (e) => {
+    const file = e.target.value;
+    if (file) loadCsvTrack("/" + file);
+  });
+  document.getElementById("clearLog").addEventListener("click", clearCsvTrack);
+
   async function refresh() {
     try {
-      // Status JSON from Pico (lat/lon/t taken from gps_utils.current_fix on server)
       const s = await fetch("/status.json", { cache: "no-store" }).then(r => r.json());
-      // GeoJSON trail from Pico (gps_utils.as_geojson on server)
-      const t = await fetch("/track.json", { cache: "no-store" }).then(r => r.json());
+      const t = await fetch("/track.json",  { cache: "no-store" }).then(r => r.json());
 
-      // Update topbar values
       if (s) {
-        // these fields are echoed from server in status.json "extra"
         document.getElementById("gps_time").textContent = s.extra && s.extra.time || "–";
         document.getElementById("fix").textContent      = s.extra && s.extra.fix  || "–";
         document.getElementById("lat").textContent      = (s.lat  != null) ? s.lat.toFixed(6) : "–";
@@ -106,7 +195,7 @@ HTML_INDEX = """<!doctype html>
           if (!initialized) { map.setView(p, 17); initialized = true; }
         }
 
-        // Update file list (lightweight echo from server)
+        // Update file list
         const files = (s.extra && s.extra.files) || [];
         const ul = document.getElementById("file_list");
         ul.innerHTML = "";
@@ -115,6 +204,9 @@ HTML_INDEX = """<!doctype html>
           const a = document.createElement("a");
           a.href = "/" + f; a.textContent = f; li.appendChild(a); ul.appendChild(li);
         }
+
+        // NEW: populate compare-log dropdown
+        populateLogListFromStatus(s.extra);
       }
 
       // Track drawing
@@ -172,7 +264,7 @@ def start_file_server(ip="0.0.0.0", port=80):
                 continue
             # -----------------------------------------------------------------
 
-            # NEW: lightweight JSON endpoints before file parsing
+            # lightweight JSON endpoints before file parsing
             if request.startswith("GET /status.json"):
                 serve_status_json(conn)
                 continue
@@ -214,21 +306,7 @@ def strip_prefix(s, prefix):
     return s[len(prefix):] if s.startswith(prefix) else s
 
 def serve_index(conn):
-    # Build the HTML page (status+map). The top bar values are driven by /status.json,
-    # but we still compute them server-side so /status.json has everything it needs.
-
-    # OPTIONAL: if nothing else calls add_fix, you can feed the track here
-    # based on the latest strings from system_state.gps_data:
-    #
-    # try:
-    #     gps = system_state.gps_data
-    #     lat_str = strip_prefix(gps.get('lat', ''), 'Lat: ').strip()
-    #     lon_str = strip_prefix(gps.get('lon', ''), 'Lon: ').strip()
-    #     if lat_str and lon_str:
-    #         gps_utils.add_fix(float(lat_str), float(lon_str))
-    # except Exception as _:
-    #     pass
-
+    # Just serve the SPA; status comes from /status.json
     send_html(conn, HTML_INDEX)
 
 def serve_status_json(conn):
