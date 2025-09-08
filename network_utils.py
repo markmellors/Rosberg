@@ -167,8 +167,8 @@ def connect_ntrip(max_attempts=3, retry_delay=5):
             s.connect(addr)
             s.send(headers.encode())
             response = s.recv(1024)
-            if b"ICY 200 OK" not in response:
-                print("NTRIP connection failed (bad response)")
+            if b"200 OK" not in response:
+                print("NTRIP connection failed (bad response)", response)
                 s.close()
                 continue
 
