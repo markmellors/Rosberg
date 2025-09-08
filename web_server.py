@@ -73,14 +73,14 @@ HTML_INDEX = """<!doctype html>
   // Basemaps
   const esri = L.tileLayer(
     "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-    { maxZoom: 19, attribution: "Tiles &copy; Esri" }
+    { maxZoom: 22, attribution: "Tiles &copy; Esri" }
   );
   const osm = L.tileLayer(
     "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-    { maxZoom: 19, attribution: "&copy; OpenStreetMap contributors" }
+    { maxZoom: 22, attribution: "&copy; OpenStreetMap contributors" }
   );
 
-  const map = L.map("map", { layers: [esri] }).setView([0, 0], 2);
+  const map = L.map("map", { layers: [esri], maxZoom: 22 }).setView([0, 0], 2);
   const trackLine = L.polyline([], { weight: 3 }).addTo(map);
   const crumbLayer = L.layerGroup().addTo(map);
   const posMarker = L.circleMarker([0, 0], { radius: 6 }).addTo(map);
@@ -133,7 +133,14 @@ HTML_INDEX = """<!doctype html>
       logLine.setLatLngs(ds);
       const crumbStep = Math.max(1, Math.floor(ds.length / 200));
       for (let i = 0; i < ds.length; i += crumbStep) {
-        L.circleMarker(ds[i], { radius: 3 }).addTo(logCrumbs);
+        L.circleMarker(ds[i], {
+          radius: 2,           // smaller than live crumbs
+          weight: 1,
+          opacity: 0.9,
+          color: "#FFAE00",    // orange-ish outline
+          fill: true,
+          fillOpacity: 0.7
+        }).addTo(logCrumbs);
       }
 
       if (ds.length) {
